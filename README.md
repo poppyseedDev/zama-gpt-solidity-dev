@@ -104,7 +104,3 @@ Contributions are welcome! If you encounter issues or have suggestions, feel fre
 ## License
 
 This project is licensed under the MIT License.
-
---- 
-
-This version provides a clearer, more professional presentation of the script’s purpose and usage, along with a structured explanation of its features and workflow.
