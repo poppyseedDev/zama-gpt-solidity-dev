@@ -1,3 +1,6 @@
 [submodule "docs/fhevm"]
 	path = docs/fhevm
 	url = https://github.com/zama-ai/fhevm
+[submodule "docs/hardhat"]
+	path = docs/hardhat
+	url = https://github.com/zama-ai/fhevm-hardhat-template
