@@ -1,0 +1,3 @@
+[submodule "docs/fhevm"]
+	path = docs/fhevm
+	url = https://github.com/zama-ai/fhevm
