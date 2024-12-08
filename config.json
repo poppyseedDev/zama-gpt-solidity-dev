@@ -1,0 +1,35 @@
+{
+    "collected_dir": "./collected/markdown",
+    "submodules": {
+      "fhevm": {
+        "docs_dir": "./modules/fhevm/docs",
+        "output_file": "fhevm_docs.md"
+      },
+      "hardhat": {
+        "source_dir": "./modules/hardhat",
+        "output_file": "hardhat_files.md",
+        "folders": [
+          "./contracts",
+          "./deploy",
+          "./tasks",
+          "./test"
+        ]
+      },
+      "contracts": {
+        "source_dir": "./modules/contracts",
+        "output_file": "contracts-files.md",
+        "folders": [
+          "./contracts",
+          "./tasks",
+          "./test/confidentialERC20",
+          "./test/governance",
+          "./test/utils"
+        ]
+      }
+    },
+    "file_types": {
+      "markdown": [".md"],
+      "code": [".ts", ".sol"]
+    }
+  }
+  

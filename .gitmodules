@@ -1,9 +1,12 @@
 [submodule "modules/fhevm"]
 	path = modules/fhevm
 	url = https://github.com/zama-ai/fhevm
+	branch = main
 [submodule "modules/hardhat"]
 	path = modules/hardhat
 	url = https://github.com/zama-ai/fhevm-hardhat-template
+	branch = main
 [submodule "modules/contracts"]
 	path = modules/contracts
 	url = https://github.com/zama-ai/fhevm-contracts
+	branch = main

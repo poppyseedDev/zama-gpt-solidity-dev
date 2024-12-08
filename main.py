@@ -1,8 +1,11 @@
 import os
 from collect_files import collect_files, collect_only_specific_file
 from to_pdf import convert_each_markdown_to_pdf
+import submodules
 
 def main():
+    submodules.update_submodules()
+
     # Collect Markdown files from fhevm (overwrite)
     fhevm_docs_dir = "./modules/fhevm/docs"
     fhevm_output_file = "./collected/markdown/fhevm_docs.md"
