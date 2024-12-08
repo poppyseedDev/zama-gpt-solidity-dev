@@ -4,3 +4,6 @@
 [submodule "modules/hardhat"]
 	path = modules/hardhat
 	url = https://github.com/zama-ai/fhevm-hardhat-template
+[submodule "modules/contracts"]
+	path = modules/contracts
+	url = https://github.com/zama-ai/fhevm-contracts
