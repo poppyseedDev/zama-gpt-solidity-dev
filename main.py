@@ -1,57 +1,97 @@
 import os
+import json
 from collect_files import collect_files, collect_only_specific_file
 from to_pdf import convert_each_markdown_to_pdf
 import submodules
 
+def load_config(config_file):
+    """
+    Load the configuration from a JSON file.
+    """
+    try:
+        with open(config_file, 'r') as file:
+            return json.load(file)
+    except Exception as e:
+        print(f"Error loading config file: {e}")
+        exit(1)
+
+def update_submodules():
+    print("\nUpdating submodules...")
+    try:
+        submodules.update_submodules()
+        print("Submodules updated successfully.")
+    except Exception as e:
+        print(f"Error updating submodules: {e}")
+        exit(1)
+
+def collect_files_from_source(source_dir, output_file, folders, file_types):
+    print(f"\nCollecting files from {source_dir}...")
+    if not os.path.exists(source_dir):
+        print(f"Source directory does not exist: {source_dir}")
+        return
+
+    # Collect README.md (overwrite)
+    collect_only_specific_file(source_dir, output_file, "README.md", append=False)
+
+    # Collect files from specified folders (append)
+    for folder in folders:
+        full_path = os.path.join(source_dir, folder.lstrip('./'))
+        if os.path.exists(full_path):
+            print(f"Processing folder: {full_path}")
+            collect_files(full_path, output_file, file_types, append=True)
+        else:
+            print(f"Folder does not exist: {full_path}")
+
+def convert_markdown_to_pdf(markdown_files):
+    print("\nConverting Markdown files to PDF...")
+    try:
+        convert_each_markdown_to_pdf(markdown_files)
+        print("PDF conversion completed.")
+    except Exception as e:
+        print(f"Error converting Markdown to PDF: {e}")
+
 def main():
-    submodules.update_submodules()
+    # Load the configuration
+    config = load_config("config.json")
 
-    # Collect Markdown files from fhevm (overwrite)
-    fhevm_docs_dir = "./modules/fhevm/docs"
-    fhevm_output_file = "./collected/markdown/fhevm_docs.md"
-    collect_files(fhevm_docs_dir, fhevm_output_file, ['.md'], append=False)
+    # Step 1: Update submodules
+    update_submodules()
 
-    # Collect .ts, .sol, and README.md files from fhevm-hardhat-template
-    hardhat_template_dir = "./modules/hardhat"
-    hardhat_output_file = "./collected/markdown/hardhat_files.md"
-    hardhat_folders = ['./contracts', './deploy', './tasks', './test']
-    # Collect README.md from root of hardhat template (overwrite)
-    collect_only_specific_file(hardhat_template_dir, hardhat_output_file, "README.md", append=False)
+    # Step 2: Collect files
+    collected_dir = config["collected_dir"]
 
-    # Loop through the specified folders and collect files (append)
-    for folder in hardhat_folders:
-        print(f"Processing folder: {folder}")
-        full_path = os.path.join(hardhat_template_dir, folder.lstrip('./'))
-        if os.path.exists(full_path):
-            collect_files(full_path, hardhat_output_file, ['.ts', '.sol'], append=True)
+    # Collect Markdown files from fhevm
+    fhevm_config = config["submodules"]["fhevm"]
+    fhevm_output_file = os.path.join(collected_dir, fhevm_config["output_file"])
+    collect_files(fhevm_config["docs_dir"], fhevm_output_file, config["file_types"]["markdown"], append=False)
 
-    # Collect .ts, .sol, and README.md files from fhevm-contracts
-    contracts_template_dir = "./modules/contracts"
-    contracts_output_file = "./collected/markdown/contracts-files.md"
-    contracts_folders = ['./contracts', './tasks', './test/confidentialERC20', './test/governance', './test/utils']
-    # Collect README.md from root of hardhat template (overwrite)
-    collect_only_specific_file(contracts_template_dir, contracts_output_file, "README.md", append=False)
+    # Collect files from hardhat
+    hardhat_config = config["submodules"]["hardhat"]
+    hardhat_output_file = os.path.join(collected_dir, hardhat_config["output_file"])
+    collect_files_from_source(
+        hardhat_config["source_dir"],
+        hardhat_output_file,
+        hardhat_config["folders"],
+        config["file_types"]["code"]
+    )
 
-    # Loop through the specified folders and collect files (append)
-    for folder in contracts_folders:
-        print(f"Processing folder: {folder}")
-        full_path = os.path.join(contracts_template_dir, folder.lstrip('./'))
-        if os.path.exists(full_path):
-            collect_files(full_path, contracts_output_file, ['.ts', '.sol'], append=True)
+    # Collect files from contracts
+    contracts_config = config["submodules"]["contracts"]
+    contracts_output_file = os.path.join(collected_dir, contracts_config["output_file"])
+    collect_files_from_source(
+        contracts_config["source_dir"],
+        contracts_output_file,
+        contracts_config["folders"],
+        config["file_types"]["code"]
+    )
 
-
-    # Convert markdown files to PDF
-    print("\nConverting markdown files to PDF...")
-
-    # List of Markdown files to convert
+    # Step 3: Convert collected Markdown files to PDF
     markdown_files = [
-        "./collected/markdown/fhevm_docs.md",
-        "./collected/markdown/hardhat_files.md",
-        "./collected/markdown/contracts-files.md"
+        fhevm_output_file,
+        hardhat_output_file,
+        contracts_output_file
     ]
-
-    # Convert each Markdown file to a separate PDF
-    convert_each_markdown_to_pdf(markdown_files)
+    convert_markdown_to_pdf(markdown_files)
 
 if __name__ == "__main__":
     main()
