@@ -185,10 +185,7 @@ Another faster way to test the coprocessor on Sepolia is to simply run the follo
 ```
 pnpm deploy-sepolia
 ```
-This would automatically deploy an instance of the `MyConfidentialERC20` example contract on Sepolia. You could then use this other command to mint some amount of confidential tokens: 
-```
-pnpm mint-sepolia
-```
+This would automatically deploy an instance of the `MyConfidentialERC20` example contract on Sepolia.
 
 ### Etherscan verification
 
@@ -205,6 +202,26 @@ npx hardhat verify-deployed --address [CONFIDENTIAL_ERC20_ADDRESS] --contract co
 ```
 
 Note that you should replace the address placeholder `[CONFIDENTIAL_ERC20_ADDRESS]` by the concrete address that is logged when you run the `pnpm deploy-sepolia` deployment script.
+
+### Interacting with the Contract
+
+Once you have deployed your contract to Sepolia (using `pnpm deploy-sepolia`), you can interact with it using the following commands:
+
+```sh
+# Mint new tokens (encrypted amount)
+npx hardhat mint --to <recipient-address> --amount <amount> --network sepolia
+
+# Check the total supply
+npx hardhat totalSupply --network sepolia
+
+# Transfer tokens to another address (encrypted amount)
+npx hardhat transfer --privatekey <private-key> --to <recipient-address> --amount <amount> --network sepolia
+
+# Check encrypted balance of an account
+npx hardhat balance --privatekey <private-key> --network sepolia
+```
+
+> **Note**: All token amounts in transactions are automatically encrypted to maintain confidentiality on the blockchain.
 
 ### Syntax Highlighting
 
@@ -814,28 +831,6 @@ func.id = "deploy_confidentialERC20"; // id required to prevent reexecution
 func.tags = ["MyConfidentialERC20"];
 
 
-# File: ./modules/hardhat/tasks/mintMyConfidentialERC20.ts
-
-import { task } from "hardhat/config";
-import type { TaskArguments } from "hardhat/types";
-import { HardhatRuntimeEnvironment } from "hardhat/types";
-
-import { MyConfidentialERC20 } from "../types";
-
-task("mint")
-  .addParam("amount", "Tokens to mint")
-  .setAction(async function (taskArguments: TaskArguments, hre: HardhatRuntimeEnvironment) {
-    const { ethers, deployments } = hre;
-    const ERC20 = await deployments.get("MyConfidentialERC20");
-    const signers = await ethers.getSigners();
-    const erc20 = (await ethers.getContractAt("MyConfidentialERC20", ERC20.address)) as MyConfidentialERC20;
-    const tx = await erc20.connect(signers[0]).mint(+taskArguments.amount);
-    const rcpt = await tx.wait();
-    console.info("Mint tx hash: ", rcpt!.hash);
-    console.info("Mint done: ", taskArguments.amount, "tokens were minted succesfully");
-  });
-
-
 # File: ./modules/hardhat/tasks/etherscanVerify.ts
 
 import { task } from "hardhat/config";
@@ -905,6 +900,182 @@ task("verify-deployed", "Verifies an already deployed contract on Etherscan")
   });
 
 
+# File: ./modules/hardhat/tasks/interactionMyConfidentialERC20.ts
+
+import { task } from "hardhat/config";
+import type { TaskArguments } from "hardhat/types";
+import { HardhatRuntimeEnvironment } from "hardhat/types";
+
+import { reencryptEuint64 } from "../test/reencrypt";
+import { MyConfidentialERC20 } from "../types";
+import { createInstance } from "./instance";
+
+task("mint")
+  .addParam("amount", "Tokens to mint")
+  .addParam("to", "Recipient address")
+  .setAction(async function (taskArguments: TaskArguments, hre: HardhatRuntimeEnvironment) {
+    try {
+      const { ethers, deployments } = hre;
+
+      // Validate input
+      const amount = Number(taskArguments.amount);
+      if (isNaN(amount) || amount <= 0) {
+        throw new Error("Amount must be a positive number");
+      }
+
+      // Validate inputs
+      if (!ethers.isAddress(taskArguments.to)) {
+        throw new Error("Invalid recipient address format");
+      }
+
+      // Get contract and signer
+      const ERC20 = await deployments.get("MyConfidentialERC20");
+      const signer = await ethers.provider.getSigner();
+      const erc20 = (await ethers.getContractAt("MyConfidentialERC20", ERC20.address, signer)) as MyConfidentialERC20;
+
+      console.info("Starting mint process...");
+      console.info(`Contract address: ${ERC20.address}`);
+      console.info(`Minting ${amount} tokens to address: ${taskArguments.to}`);
+
+      const tx = await erc20.mint(taskArguments.to, amount);
+      console.info("Transaction submitted, waiting for confirmation...");
+
+      const rcpt = await tx.wait();
+      console.info("✅ Mint transaction successful!");
+      console.info("Transaction hash:", rcpt!.hash);
+      console.info(`${amount} tokens were minted to ${taskArguments.to}`);
+    } catch (error) {
+      console.error("❌ Mint failed:");
+      console.error(error instanceof Error ? error.message : error);
+      throw error;
+    }
+  });
+
+task("totalSupply").setAction(async function (taskArguments: TaskArguments, hre: HardhatRuntimeEnvironment) {
+  try {
+    const { ethers, deployments } = hre;
+
+    // Get contract
+    const ERC20 = await deployments.get("MyConfidentialERC20");
+    const erc20 = (await ethers.getContractAt("MyConfidentialERC20", ERC20.address)) as MyConfidentialERC20;
+
+    // Get total supply
+    const totalSupply = await erc20.totalSupply();
+    console.info("✅ Retrieved total supply successfully");
+
+    console.info("----------------------------------------");
+    console.info(`Total Supply: ${totalSupply.toString()} tokens`);
+    console.info("----------------------------------------");
+  } catch (error) {
+    console.error("❌ Total supply check failed:");
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
+});
+
+task("balance")
+  .addParam("privatekey", "Private key of the address to check balance for")
+  .setAction(async function (taskArguments: TaskArguments, hre: HardhatRuntimeEnvironment) {
+    try {
+      const { ethers, deployments } = hre;
+
+      // Create wallet from private key and get address
+      const wallet = new ethers.Wallet(taskArguments.privatekey);
+      const address = wallet.address;
+
+      console.info("Checking balance for address:", address);
+
+      // Get contract
+      const ERC20 = await deployments.get("MyConfidentialERC20");
+      const erc20 = (await ethers.getContractAt("MyConfidentialERC20", ERC20.address)) as MyConfidentialERC20;
+
+      const fhevm = await createInstance(hre);
+
+      // Get balance handle
+      const balanceHandle = await erc20.balanceOf(address);
+      console.info("✅ Retrieved balance handle successfully");
+
+      let balance;
+      // Check if the handle is 0
+      if (balanceHandle === 0n) {
+        balance = 0n;
+      } else {
+        // Reencrypt and display balance using the wallet derived from private key
+        balance = await reencryptEuint64(wallet, fhevm, balanceHandle, ERC20.address);
+      }
+
+      console.info("----------------------------------------");
+      console.info(`Address: ${address}`);
+      console.info(`Balance: ${balance.toString()} tokens`);
+      console.info("----------------------------------------");
+    } catch (error) {
+      console.error("❌ Balance check failed:");
+      console.error(error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    }
+  });
+
+task("transfer")
+  .addParam("privatekey", "Private key of the address from which we are sending the tokens")
+  .addParam("to", "Recipient address")
+  .addParam("amount", "Amount to transfer")
+  .setAction(async function (taskArguments: TaskArguments, hre: HardhatRuntimeEnvironment) {
+    try {
+      const { ethers, deployments } = hre;
+
+      // Validate inputs
+      if (!ethers.isAddress(taskArguments.to)) {
+        throw new Error("Invalid recipient address format");
+      }
+
+      const amount = Number(taskArguments.amount);
+      if (isNaN(amount) || amount <= 0) {
+        throw new Error("Amount must be a positive number");
+      }
+
+      console.info("Starting transfer process...");
+
+      // Create wallet from private key and connect it to the provider
+      const wallet = new ethers.Wallet(taskArguments.privatekey, ethers.provider);
+      const address = wallet.address;
+
+      // Get contract
+      const ERC20 = await deployments.get("MyConfidentialERC20");
+      const erc20 = (await ethers.getContractAt("MyConfidentialERC20", ERC20.address)) as MyConfidentialERC20;
+
+      console.info(`Contract address: ${ERC20.address}`);
+      console.info(`From: ${address}`);
+      console.info(`To: ${taskArguments.to}`);
+      console.info(`Amount: ${amount} tokens`);
+
+      // Create and encrypt the transfer amount
+      const instance = await createInstance(hre);
+      const input = instance.createEncryptedInput(ERC20.address, address);
+      input.add64(amount);
+      const encryptedAmount = await input.encrypt();
+
+      console.info("Submitting transfer transaction...");
+      const tx = await erc20.connect(wallet)[
+        // eslint-disable-next-line no-unexpected-multiline
+        "transfer(address,bytes32,bytes)"
+      ](taskArguments.to, encryptedAmount.handles[0], encryptedAmount.inputProof);
+
+      console.info("Waiting for confirmation...");
+      const rcpt = await tx.wait();
+
+      console.info("----------------------------------------");
+      console.info("✅ Transfer successful!");
+      console.info("Transaction hash:", rcpt!.hash);
+      console.info(`Transferred ${amount} tokens to ${taskArguments.to}`);
+      console.info("----------------------------------------");
+    } catch (error) {
+      console.error("❌ Transfer failed:");
+      console.error(error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    }
+  });
+
+
 # File: ./modules/hardhat/tasks/accounts.ts
 
 import { task, types } from "hardhat/config";
@@ -946,6 +1117,28 @@ task("get-accounts", "Prints the list of accounts")
       console.info(`Private Key: ${privateKey}`);
     });
   });
+
+
+# File: ./modules/hardhat/tasks/instance.ts
+
+import { createInstance as createFhevmInstance } from "fhevmjs";
+import { FhevmInstance } from "fhevmjs/node";
+import { HardhatRuntimeEnvironment } from "hardhat/types";
+
+import { ACL_ADDRESS, GATEWAY_URL, KMSVERIFIER_ADDRESS } from "../test/constants";
+
+const kmsAdd = KMSVERIFIER_ADDRESS;
+const aclAdd = ACL_ADDRESS;
+
+export const createInstance = async (hre: HardhatRuntimeEnvironment): Promise<FhevmInstance> => {
+  const instance = await createFhevmInstance({
+    kmsContractAddress: kmsAdd,
+    aclContractAddress: aclAdd,
+    networkUrl: hre.network.config.url,
+    gatewayUrl: GATEWAY_URL,
+  });
+  return instance;
+};
 
 
 # File: ./modules/hardhat/test/utils.ts
@@ -1287,22 +1480,28 @@ import {
 const OneAddress = "0x0000000000000000000000000000000000000001";
 
 export async function setCodeMocked(hre: HardhatRuntimeEnvironment) {
-  const aclArtifact = require("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
+  const aclArtifact = await import("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
   const aclBytecode = aclArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [ACL_ADDRESS, aclBytecode]);
-  const execArtifact = require("fhevm-core-contracts/artifacts/contracts/TFHEExecutorWithEvents.sol/TFHEExecutorWithEvents.json");
+  const execArtifact = await import(
+    "fhevm-core-contracts/artifacts/contracts/TFHEExecutorWithEvents.sol/TFHEExecutorWithEvents.json"
+  );
   const execBytecode = execArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [TFHEEXECUTOR_ADDRESS, execBytecode]);
-  const kmsArtifact = require("fhevm-core-contracts/artifacts/contracts/KMSVerifier.sol/KMSVerifier.json");
+  const kmsArtifact = await import("fhevm-core-contracts/artifacts/contracts/KMSVerifier.sol/KMSVerifier.json");
   const kmsBytecode = kmsArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [KMSVERIFIER_ADDRESS, kmsBytecode]);
-  const inputArtifact = require("fhevm-core-contracts/artifacts/contracts/InputVerifier.coprocessor.sol/InputVerifier.json");
+  const inputArtifact = await import(
+    "fhevm-core-contracts/artifacts/contracts/InputVerifier.coprocessor.sol/InputVerifier.json"
+  );
   const inputBytecode = inputArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [INPUTVERIFIER_ADDRESS, inputBytecode]);
-  const fhepaymentArtifact = require("fhevm-core-contracts/artifacts/contracts/FHEPayment.sol/FHEPayment.json");
+  const fhepaymentArtifact = await import("fhevm-core-contracts/artifacts/contracts/FHEPayment.sol/FHEPayment.json");
   const fhepaymentBytecode = fhepaymentArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [FHEPAYMENT_ADDRESS, fhepaymentBytecode]);
-  const gatewayArtifact = require("fhevm-core-contracts/artifacts/gateway/GatewayContract.sol/GatewayContract.json");
+  const gatewayArtifact = await import(
+    "fhevm-core-contracts/artifacts/gateway/GatewayContract.sol/GatewayContract.json"
+  );
   const gatewayBytecode = gatewayArtifact.deployedBytecode;
   await hre.network.provider.send("hardhat_setCode", [GATEWAYCONTRACT_ADDRESS, gatewayBytecode]);
   const zero = await impersonateAddress(hre, ZeroAddress, hre.ethers.parseEther("100"));
@@ -1445,17 +1644,18 @@ const fulfillAllPastRequestsIds = async (mocked: boolean) => {
     const handles = event.args[1];
     const typesList = handles.map((handle) => parseInt(handle.toString(16).slice(-4, -2), 16));
     const msgValue = event.args[4];
-    const passSignaturesToCaller = event.args[6];
+
     if (!results.includes(requestID)) {
       // if request is not already fulfilled
       if (mocked) {
         // in mocked mode, we trigger the decryption fulfillment manually
         await awaitCoprocessor();
-
-        // first check tat all handles are allowed for decryption
-        const aclArtifact = require("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
-        const acl = await ethers.getContractAt(aclArtifact.abi, ACL_ADDRESS);
-        const isAllowedForDec = await Promise.all(handles.map(async (handle) => acl.isAllowedForDecryption(handle)));
+        // first check that all handles are allowed for decryption
+        const { abi: aclAbi } = await import("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
+        const acl = await ethers.getContractAt(aclAbi, ACL_ADDRESS);
+        const isAllowedForDec = await Promise.all(
+          handles.map(async (handle: bigint) => acl.isAllowedForDecryption(handle)),
+        );
         if (!allTrue(isAllowedForDec)) {
           throw new Error("Some handle is not authorized for decryption");
         }
@@ -1475,15 +1675,9 @@ const fulfillAllPastRequestsIds = async (mocked: boolean) => {
         );
 
         const abiCoder = new ethers.AbiCoder();
-        let encodedData;
-        let calldata;
-        if (!passSignaturesToCaller) {
-          encodedData = abiCoder.encode(["uint256", ...types], [31, ...valuesFormatted4]); // 31 is just a dummy uint256 requestID to get correct abi encoding for the remaining arguments (i.e everything except the requestID)
-          calldata = "0x" + encodedData.slice(66); // we just pop the dummy requestID to get the correct value to pass for `decryptedCts`
-        } else {
-          encodedData = abiCoder.encode(["uint256", ...types, "bytes[]"], [31, ...valuesFormatted4, []]); // adding also a dummy empty array of bytes for correct abi-encoding when used with signatures
-          calldata = "0x" + encodedData.slice(66).slice(0, -64); // we also pop the last 32 bytes (empty bytes[])
-        }
+
+        const encodedData = abiCoder.encode(["uint256", ...types], [31, ...valuesFormatted4]); // 31 is just a dummy uint256 requestID to get correct abi encoding for the remaining arguments (i.e everything except the requestID)
+        const calldata = "0x" + encodedData.slice(66); // we just pop the dummy requestID to get the correct value to pass for `decryptedCts`
 
         const numSigners = 1; // for the moment mocked mode only uses 1 signer
         const decryptResultsEIP712signatures = await computeDecryptSignatures(handles, calldata, numSigners);
@@ -1707,13 +1901,15 @@ export const reencryptRequestMocked = async (
   }
 
   // ACL checking
-  const aclArtifact = require("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
+  const aclArtifact = await import("fhevm-core-contracts/artifacts/contracts/ACL.sol/ACL.json");
   const acl = await hre.ethers.getContractAt(aclArtifact.abi, ACL_ADDRESS);
   const userAllowed = await acl.persistAllowed(handle, userAddress);
   const contractAllowed = await acl.persistAllowed(handle, contractAddress);
-  const isAllowed = userAllowed && contractAllowed;
-  if (!isAllowed) {
+  if (!userAllowed) {
     throw new Error("User is not authorized to reencrypt this handle!");
+  }
+  if (!contractAllowed) {
+    throw new Error("dApp contract is not authorized to reencrypt this handle!");
   }
   if (userAddress === contractAddress) {
     throw new Error("userAddress should not be equal to contractAddress when requesting reencryption!");
@@ -2116,6 +2312,7 @@ const executorAddress = TFHEEXECUTOR_ADDRESS;
 let firstBlockListening = 0;
 let lastBlockSnapshot = 0;
 let lastCounterRand = 0;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let counterRand = 0;
 
 //const db = new Database('./sql.db'); // on-disk db for debugging
@@ -2289,7 +2486,7 @@ async function processAllPastTFHEExecutorEvents() {
           eventName: parsedLog.name,
           args: parsedLog.args,
         };
-      } catch (e) {
+      } catch {
         // If the log cannot be parsed, skip it
         return null;
       }
@@ -2668,7 +2865,7 @@ async function insertHandleFromEvent(event: FHEVMEvent) {
       }
       break;
 
-    case "FheIfThenElse":
+    case "FheIfThenElse": {
       handle = ethers.toBeHex(event.args[3], 32);
       resultType = parseInt(handle.slice(-4, -2), 16);
       handle = ethers.toBeHex(event.args[3], 32);
@@ -2682,6 +2879,7 @@ async function insertHandleFromEvent(event: FHEVMEvent) {
       }
       insertSQL(handle, clearText);
       break;
+    }
 
     case "FheRand":
       resultType = parseInt(event.args[0], 16);
@@ -2886,6 +3084,7 @@ export function getFHEGasFromTxReceipt(receipt: ethers.TransactionReceipt): numb
         } else {
           FHEGasConsumed += operatorPrices["fheEq"].nonScalar[type];
         }
+        break;
 
       case "FheNe":
         handle = ethers.toBeHex(event.args[0], 32);
@@ -3027,7 +3226,7 @@ import { ethers } from "hardhat";
 
 import { ACCOUNT_NAMES } from "./constants";
 
-type AccountNames = (typeof ACCOUNT_NAMES)[number];
+export type AccountNames = (typeof ACCOUNT_NAMES)[number];
 
 export interface Signers {
   [K in AccountNames]: HardhatEthersSigner;
@@ -3215,7 +3414,7 @@ async function reencryptHandle(
   instance: FhevmInstance,
   handle: bigint,
   contractAddress: string,
-): Promise<any> {
+): Promise<bigint> {
   const { publicKey: publicKey, privateKey: privateKey } = instance.generateKeypair();
   const eip712 = instance.createEIP712(publicKey, contractAddress);
   const signature = await signer.signTypedData(eip712.domain, { Reencrypt: eip712.types.Reencrypt }, eip712.message);
@@ -3309,7 +3508,7 @@ describe("ConfidentialERC20:FHEGas", function () {
   });
 
   it("gas consumed during transfer", async function () {
-    const transaction = await this.erc20.mint(10000);
+    const transaction = await this.erc20.mint(this.signers.alice, 10000);
     const t1 = await transaction.wait();
     expect(t1?.status).to.eq(1);
 
@@ -3317,7 +3516,7 @@ describe("ConfidentialERC20:FHEGas", function () {
     input.add64(1337);
     const encryptedTransferAmount = await input.encrypt();
     const tx = await this.erc20["transfer(address,bytes32,bytes)"](
-      this.signers.bob.address,
+      this.signers.bob,
       encryptedTransferAmount.handles[0],
       encryptedTransferAmount.inputProof,
     );
@@ -3333,14 +3532,14 @@ describe("ConfidentialERC20:FHEGas", function () {
   });
 
   it("gas consumed during transferFrom", async function () {
-    const transaction = await this.erc20.mint(10000);
+    const transaction = await this.erc20.mint(this.signers.alice, 10000);
     await transaction.wait();
 
     const inputAlice = this.fhevm.createEncryptedInput(this.contractAddress, this.signers.alice.address);
     inputAlice.add64(1337);
     const encryptedAllowanceAmount = await inputAlice.encrypt();
     const tx = await this.erc20["approve(address,bytes32,bytes)"](
-      this.signers.bob.address,
+      this.signers.bob,
       encryptedAllowanceAmount.handles[0],
       encryptedAllowanceAmount.inputProof,
     );
@@ -3351,8 +3550,8 @@ describe("ConfidentialERC20:FHEGas", function () {
     inputBob2.add64(1337); // below allowance so next tx should send token
     const encryptedTransferAmount2 = await inputBob2.encrypt();
     const tx3 = await bobErc20["transferFrom(address,address,bytes32,bytes)"](
-      this.signers.alice.address,
-      this.signers.bob.address,
+      this.signers.alice,
+      this.signers.bob,
       encryptedTransferAmount2.handles[0],
       encryptedTransferAmount2.inputProof,
     );
@@ -3360,10 +3559,10 @@ describe("ConfidentialERC20:FHEGas", function () {
     if (network.name === "hardhat") {
       // `getFHEGasFromTxReceipt` function only works in mocked mode but gives same exact FHEGas consumed than on the real fhEVM
       const FHEGasConsumedTransferFrom = getFHEGasFromTxReceipt(t3);
-      console.log("FHEGas Consumed during transfer", FHEGasConsumedTransferFrom);
+      console.log("FHEGas Consumed during transferFrom", FHEGasConsumedTransferFrom);
     }
     // contrarily to FHEGas, native gas in mocked mode slightly differs from the real gas consumption on fhevm (underestimated by ~20%)
-    console.log("Native Gas Consumed during transfer", t3.gasUsed);
+    console.log("Native Gas Consumed during transferFrom", t3.gasUsed);
   });
 });
 
@@ -3393,7 +3592,7 @@ describe("ConfidentialERC20", function () {
   });
 
   it("should mint the contract", async function () {
-    const transaction = await this.erc20.mint(1000);
+    const transaction = await this.erc20.mint(this.signers.alice, 1000);
     await transaction.wait();
 
     // Reencrypt Alice's balance
@@ -3412,7 +3611,7 @@ describe("ConfidentialERC20", function () {
   });
 
   it("should transfer tokens between two users", async function () {
-    const transaction = await this.erc20.mint(10000);
+    const transaction = await this.erc20.mint(this.signers.alice, 10000);
     const t1 = await transaction.wait();
     expect(t1?.status).to.eq(1);
 
@@ -3420,7 +3619,7 @@ describe("ConfidentialERC20", function () {
     input.add64(1337);
     const encryptedTransferAmount = await input.encrypt();
     const tx = await this.erc20["transfer(address,bytes32,bytes)"](
-      this.signers.bob.address,
+      this.signers.bob,
       encryptedTransferAmount.handles[0],
       encryptedTransferAmount.inputProof,
     );
@@ -3454,14 +3653,14 @@ describe("ConfidentialERC20", function () {
   });
 
   it("should not transfer tokens between two users", async function () {
-    const transaction = await this.erc20.mint(1000);
+    const transaction = await this.erc20.mint(this.signers.alice, 1000);
     await transaction.wait();
 
     const input = this.fhevm.createEncryptedInput(this.contractAddress, this.signers.alice.address);
     input.add64(1337);
     const encryptedTransferAmount = await input.encrypt();
     const tx = await this.erc20["transfer(address,bytes32,bytes)"](
-      this.signers.bob.address,
+      this.signers.bob,
       encryptedTransferAmount.handles[0],
       encryptedTransferAmount.inputProof,
     );
@@ -3483,14 +3682,14 @@ describe("ConfidentialERC20", function () {
   });
 
   it("should be able to transferFrom only if allowance is sufficient", async function () {
-    const transaction = await this.erc20.mint(10000);
+    const transaction = await this.erc20.mint(this.signers.alice, 10000);
     await transaction.wait();
 
     const inputAlice = this.fhevm.createEncryptedInput(this.contractAddress, this.signers.alice.address);
     inputAlice.add64(1337);
     const encryptedAllowanceAmount = await inputAlice.encrypt();
     const tx = await this.erc20["approve(address,bytes32,bytes)"](
-      this.signers.bob.address,
+      this.signers.bob,
       encryptedAllowanceAmount.handles[0],
       encryptedAllowanceAmount.inputProof,
     );
@@ -3501,8 +3700,8 @@ describe("ConfidentialERC20", function () {
     inputBob1.add64(1338); // above allowance so next tx should actually not send any token
     const encryptedTransferAmount = await inputBob1.encrypt();
     const tx2 = await bobErc20["transferFrom(address,address,bytes32,bytes)"](
-      this.signers.alice.address,
-      this.signers.bob.address,
+      this.signers.alice,
+      this.signers.bob,
       encryptedTransferAmount.handles[0],
       encryptedTransferAmount.inputProof,
     );
@@ -3527,8 +3726,8 @@ describe("ConfidentialERC20", function () {
     inputBob2.add64(1337); // below allowance so next tx should send token
     const encryptedTransferAmount2 = await inputBob2.encrypt();
     const tx3 = await bobErc20["transferFrom(address,address,bytes32,bytes)"](
-      this.signers.alice.address,
-      this.signers.bob.address,
+      this.signers.alice,
+      this.signers.bob,
       encryptedTransferAmount2.handles[0],
       encryptedTransferAmount2.inputProof,
     );
@@ -3554,13 +3753,13 @@ describe("ConfidentialERC20", function () {
     if (network.name === "hardhat") {
       // using the debug.decryptXX functions is possible only in mocked mode
 
-      const transaction = await this.erc20.mint(1000);
+      const transaction = await this.erc20.mint(this.signers.alice, 1000);
       await transaction.wait();
       const input = this.fhevm.createEncryptedInput(this.contractAddress, this.signers.alice.address);
       input.add64(1337);
       const encryptedTransferAmount = await input.encrypt();
       const tx = await this.erc20["transfer(address,bytes32,bytes)"](
-        this.signers.bob.address,
+        this.signers.bob,
         encryptedTransferAmount.handles[0],
         encryptedTransferAmount.inputProof,
       );
